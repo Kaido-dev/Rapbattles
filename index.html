@@ -347,6 +347,67 @@
 
     <script>
         let comments = [];
+        const GITHUB_USERNAME = 'kaido-dev';
+        const GITHUB_REPO = 'Rapbattles';
+        const GITHUB_API_URL = `https://api.github.com/repos/${GITHUB_USERNAME}/${GITHUB_REPO}/issues`;
+
+        async function loadCommentsFromGitHub() {
+            try {
+                const response = await fetch(`${GITHUB_API_URL}?labels=comment&state=open&sort=created&direction=desc`);
+                if (response.ok) {
+                    const issues = await response.json();
+                    comments = issues.map(issue => ({
+                        id: issue.number,
+                        author: issue.title.replace('[COMMENT] ', ''),
+                        text: issue.body,
+                        timestamp: new Date(issue.created_at)
+                    }));
+                    updateCommentCount();
+                    renderComments();
+                } else {
+                    console.log('Could not load comments from GitHub');
+                }
+            } catch (error) {
+                console.log('Error loading comments:', error);
+            }
+        }
+
+        async function postCommentToGitHub(author, text) {
+            const issueData = {
+                title: `[COMMENT] ${author}`,
+                body: text,
+                labels: ['comment']
+            };
+
+            try {
+                const response = await fetch(GITHUB_API_URL, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify(issueData)
+                });
+
+                if (response.ok) {
+                    const newIssue = await response.json();
+                    const newComment = {
+                        id: newIssue.number,
+                        author: author,
+                        text: text,
+                        timestamp: new Date(newIssue.created_at)
+                    };
+                    comments.unshift(newComment);
+                    updateCommentCount();
+                    renderComments();
+                    return true;
+                } else {
+                    throw new Error(`GitHub API error: ${response.status}`);
+                }
+            } catch (error) {
+                console.error('Error posting comment:', error);
+                return false;
+            }
+        }
 
         function retryEmbed() {
             const wrapper = document.getElementById('videoWrapper');
@@ -428,9 +489,10 @@
             `).join('');
         }
 
-        function addComment() {
+        async function addComment() {
             const authorInput = document.getElementById('authorName');
             const textInput = document.getElementById('commentText');
+            const submitBtn = document.querySelector('.submit-btn');
             
             const author = authorInput.value.trim();
             const text = textInput.value.trim();
@@ -440,20 +502,38 @@
                 return;
             }
 
-            const comment = {
-                id: Date.now(),
-                author: author,
-                text: text,
-                timestamp: new Date()
-            };
+            // Disable button and show loading state
+            submitBtn.disabled = true;
+            submitBtn.textContent = 'POSTING...';
 
-            comments.unshift(comment);
+            const success = await postCommentToGitHub(author, text);
             
-            authorInput.value = '';
-            textInput.value = '';
-            
-            updateCommentCount();
-            renderComments();
+            if (success) {
+                authorInput.value = '';
+                textInput.value = '';
+                submitBtn.textContent = 'POSTED!';
+                setTimeout(() => {
+                    submitBtn.textContent = 'POST COMMENT';
+                    submitBtn.disabled = false;
+                }, 2000);
+            } else {
+                alert('Failed to post comment. This might be because the repository needs to be configured for public comments. The comment has been saved locally for now.');
+                // Fallback to local storage
+                const comment = {
+                    id: Date.now(),
+                    author: author,
+                    text: text,
+                    timestamp: new Date()
+                };
+                comments.unshift(comment);
+                updateCommentCount();
+                renderComments();
+                
+                authorInput.value = '';
+                textInput.value = '';
+                submitBtn.textContent = 'POST COMMENT';
+                submitBtn.disabled = false;
+            }
         }
 
         document.getElementById('commentText').addEventListener('keypress', function(e) {
@@ -463,14 +543,15 @@
             }
         });
 
+        // Refresh comments every 30 seconds to show new comments from other users
         setInterval(() => {
-            if (comments.length > 0) {
-                renderComments();
-            }
-        }, 60000);
+            loadCommentsFromGitHub();
+        }, 30000);
 
+        // Initialize
         updateCommentCount();
         checkEmbedStatus();
+        loadCommentsFromGitHub();
     </script>
 </body>
 </html>
